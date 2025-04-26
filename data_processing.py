@@ -313,8 +313,24 @@ def spectral_features(fft_df, freqs, name):
 # Returns a dataframe that the model can work with to predict.
 # The targets are not included in the returning dataframe
 def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors_duplicates:dict[str, int], stat_names:list[str], sampling_rates_dict:dict[str, int], 
-                 sensors_for_statistics:list[str], scaler:StandardScaler | MinMaxScaler, profile_df:pd.DataFrame, ):
-    
+                 sensors_for_statistics:list[str], scaler:StandardScaler | MinMaxScaler, profile_df:pd.DataFrame=[]):
+    """
+    Processes the data from the sensor_dict and the profile_df and extract statistical, and frequency features that are added to the final 
+    reference dataframe X.
+
+    Args:
+        sensors (list[str]): List of the sensors used in the setup from the dataset.
+        sensor_dict (dict[str, pd.DataFrame]): Sensor dict as explained in the load_data function.
+        sensors_duplicates (dict[str, int]): Dictionary with the prefixes of the duplicate sensors in the dataset as keys and values the number of the sensor repeating in the dataset.
+        stat_names (list[str]): A list with the statistics that will be added. Used for column adding.
+        sampling_rates_dict (dict[str, int]): Dictionary with all the sensor names (str) as keys and their respecting sampling rate as values.
+        sensors_for_statistics (list[str]): Short list of names of sensors that end up in the statistics dataframe.
+        scaler (StandardScaler | MinMaxScaler): Scaler from sklearn.preprocessing module.
+        profile_df (pd.DataFrame): Profile dataframe as returned from the load_data(). Defaults to [].
+
+    Returns:
+        pd.DataFrame: Returns a dataframe with the reference columns of the model, without the target columns on it. 
+    """
     # Statistical analysis
     # Create statistical dict(str:df)
     stats_df = {}
@@ -328,28 +344,31 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
         for i in range(1, sensors_duplicates[sensor] + 1):
             temp.append(stats_df[f"{sensor}{i}_stats"])
             stats_df.pop(f"{sensor}{i}_stats") # delete the individual sensor value
-        
         # Add the new combined data back into the dictionary
-        stats_df["{sensor}_stats"] = combine_sensor_stats(df_list=temp, prefix=sensor, stat_names=stat_names)
-    
+        stats_df[f"{sensor}_stats"] = combine_sensor_stats(df_list=temp, prefix=sensor, stat_names=stat_names)
+        
+    print("Stats combined...")
+
     # Combine all the statistical data into one dataframe
     statistical_df_list = []
     for sensor in stats_df:
-        statistical_df_list.append(stats_df["{sensor}_stats"])
+        statistical_df_list.append(stats_df[sensor])
     
     # Final statistical_df
     statistical_df = pd.concat(statistical_df_list, axis=1)
-    
+    print("Stats\n" , statistical_df)
+
     # Copy the statistical_df for the shake of the calculations
     copy_data = statistical_df.copy()
-
+    
     # Coefficient of variance computation
     cv_df = copy_data.apply(lambda row: compute_coefficient_variance(row, sensors_for_statistics), axis=1, result_type='expand')
-    
+    print("CV\n", cv_df)
     # Stability ratio computation
     # Apply the function row by row
     stability_df = copy_data.apply(lambda row: compute_stability(row, sensors_for_statistics), axis=1, result_type='expand')
-    
+    print("Stability\n", stability_df)
+
     # EMA computation
     ema_span = 5 #το 5 μπηκε αυθαιρετα
 
@@ -359,6 +378,7 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
 
     # EMA dataframe
     ema_df = statistical_df[[col for col in statistical_df.columns if col.endswith('_ema')]]
+    print("EMA\n", ema_df)
     
     # Frequency analysis
     fft_dfs = {}
@@ -390,9 +410,15 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
 
     # Frequency
     freq_df = pd.concat([band_power_df, top_peaks_df, spectral_df], axis=1)
-
+    print("Frequency\n", freq_df)
     # Add all the dfs into one
-    final_df = pd.concat([statistical_df, cv_df, stability_df, ema_df, freq_df, profile_df], axis=1)
+    final_df = pd.concat([statistical_df, cv_df, stability_df, ema_df, freq_df], axis=1)
+
+    # Add profile_df if it is not empty
+    if profile_df.empty == False:
+        print(profile_df)
+        final_df = pd.concat([final_df, profile_df], axis=1)
+
 
     # Scale the data
     scaled_data = scaler.fit_transform(final_df)
@@ -452,9 +478,15 @@ if __name__ == '__main__':
     
 
     # TESTING load_data()
-    sensor_dfs_dict, profile_dict = load_data(sensors=sensors, folder_path=folder_path, profile_columns=profile_columns, has_profile_file=has_profile_file)
-    print(sensor_dfs_dict, profile_dict)
+    #* DONE
+    sensor_dfs_dict, profile_df = load_data(sensors=sensors, folder_path=folder_path, profile_columns=profile_columns, has_profile_file=has_profile_file)
+    print(sensor_dfs_dict, profile_df)
 
+    # TESTING process_data()
+    final_df = process_data(sensors=sensors, sensor_dict=sensor_dfs_dict, sensors_duplicates=sensor_duplicates,
+                            stat_names=stat_names, sampling_rates_dict=sampling_rates_dict, sensors_for_statistics=sensors_for_statistics,
+                            scaler=StandardScaler(), profile_df=profile_df)
+    print(final_df)
 
 # Plotting fft analysis
 def plot_fft_spectrum(fft_df, instance_indices=[0], max_freq=None):
