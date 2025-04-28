@@ -479,9 +479,27 @@ def create_failure_flag(row) -> bool:
   return int(failure_flag)
 
 # Health State Classification (multi-class) 
-def compute_health_state(rul_series):
+def compute_health_state(rul_series, column_name="health_state"):
+    """
+    Computes the health state based on RUL (Remaining Useful Life).
+
+    Args:
+        rul_series (array-like or pd.Series): The RUL values.
+        column_name (str): Name of the output DataFrame column (default is "health_state").
+
+    Returns:
+        pd.DataFrame: DataFrame with a single column containing health states:
+                      0 - Healthy, 1 - Degraded, 2 - Failing.
+    """
     values = [0, 1, 2]  # 0: Healthy, 1: Degraded, 2: Failing
-    return pd.cut(rul_series, bins=[-1, 10, 30, float('inf')], labels=values[::-1], right=True).astype(int)
+    health_states = pd.cut(
+        rul_series,
+        bins=[-1, 10, 30, float('inf')],
+        labels=values[::-1],
+        right=True
+    ).astype(int)
+
+    return pd.DataFrame(health_states, columns=[column_name])
 
 # Returns a dataframe with the target data the model can predict.
 def target_data(training_df: pd.DataFrame, profile_df: pd.DataFrame) -> pd.DataFrame:
@@ -539,15 +557,15 @@ def target_data(training_df: pd.DataFrame, profile_df: pd.DataFrame) -> pd.DataF
 
     # RUL (Remaining Useful Life)
     rul_col = pd.DataFrame(compute_ttf(failure_flag_col.values), columns=["RUL", ])
-    print(rul_col)
+    print("Remaining Useful Life computed...")
 
     # Health State
-    health_state_col = pd.DataFrame(compute_health_state(rul_col["RUL"]), columns=["health_state", ])
-    print(health_state_col)
+    health_state_col = compute_health_state(rul_col["RUL"].values)
+    print("Health State computed...")
 
     # Failure modes
     failure_modes_df = compute_failure_modes(training_df)
-    print(failure_modes_df)
+    print("Failure modes computed...")
 
     # Putting the maintenance score to the end
     target_df = pd.concat([failure_flag_col, rul_col, health_state_col, failure_modes_df, maintenance_col], axis=1)
@@ -572,7 +590,7 @@ def extract_to_csv(data: pd.DataFrame, filename: str, file_extension: str = 'csv
     if not isinstance(data, pd.DataFrame):
         raise ValueError("The 'data' parameter must be a pandas DataFrame.")
 
-    full_filename = f"{filename}.{file_extension}"
+    full_filename = f"data_tables/{filename}.{file_extension}"
     data.to_csv(full_filename, sep=separator, index=False)
     print(f"Data successfully extracted to {full_filename}")
 
