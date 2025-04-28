@@ -16,11 +16,11 @@ print(target_df)
 
 # Sidebar
 st.sidebar.title("Settings")
-machine_id = st.sidebar.selectbox("Select Machine (or Batch)", options=target_df.index.unique())
+machine_id = st.sidebar.selectbox("Select Machine ID", options=target_df.index.unique())
 view_option = st.sidebar.radio("View Options", ('Overview', 'Detailed Trends'))
 
 # Filtered Data
-machine_data = target_df.loc[machine_id]
+machine_data = target_df.iloc[machine_id]
 
 # Overview Metrics
 st.header(f"Machine ID: {machine_id}")
@@ -41,7 +41,7 @@ st.divider()
 
 # Failure Modes
 st.subheader("Failure Mode Probabilities")
-st.write(machine_data[['cooler_failure', 'valve_failure', 'pump_leakage_failure', 'accumulator_failure']])
+st.write(machine_data[['cooler_failure', 'valve_failure', 'pump_failure', 'hydraulic_failure']])
 
 # Plotting Trends
 if view_option == 'Detailed Trends':
@@ -86,4 +86,4 @@ else:
 st.divider()
 
 # Footer
-st.caption("Built with ❤️ for Predictive Maintenance Monitoring.")
+st.caption("Built for Predictive Maintenance Monitoring.")
