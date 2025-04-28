@@ -10,7 +10,6 @@ import os
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import find_peaks
 
-
 # Load data
 #* DONE
 def load_data(sensors:list[str], folder_path:os.PathLike, profile_columns:list[str]=[], sep:str="\t", has_profile_file:bool=False, file_extension:str=".txt", profile_filename:str="profile") -> dict | tuple:
@@ -59,7 +58,6 @@ def load_data(sensors:list[str], folder_path:os.PathLike, profile_columns:list[s
         return sensor_dfs, profile
     
     return sensor_dfs # in case no profile is inside the dataset 
-
 
 # Helpers
 # Creates statistical data for the sensors
@@ -311,6 +309,7 @@ def spectral_features(fft_df, freqs, name):
 #! NEEDS TESTING and it's probably REALLY slow
 # Process data
 # Returns a dataframe that the model can work with to predict.
+# Also prints the states of the training_df.
 # The targets are not included in the returning dataframe
 def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors_duplicates:dict[str, int], stat_names:list[str], sampling_rates_dict:dict[str, int], 
                  sensors_for_statistics:list[str], scaler:StandardScaler | MinMaxScaler, profile_df:pd.DataFrame=[]):
@@ -356,18 +355,19 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
     
     # Final statistical_df
     statistical_df = pd.concat(statistical_df_list, axis=1)
-    print("Stats\n" , statistical_df)
+    print("Statistics made...\n", f"Size: {statistical_df.columns.size}")
 
     # Copy the statistical_df for the shake of the calculations
     copy_data = statistical_df.copy()
     
     # Coefficient of variance computation
     cv_df = copy_data.apply(lambda row: compute_coefficient_variance(row, sensors_for_statistics), axis=1, result_type='expand')
-    print("CV\n", cv_df)
+    print("Coefficient of Variance computed...\n", f"Size: {cv_df.columns.size}")
+
     # Stability ratio computation
     # Apply the function row by row
     stability_df = copy_data.apply(lambda row: compute_stability(row, sensors_for_statistics), axis=1, result_type='expand')
-    print("Stability\n", stability_df)
+    print("Stability computed...\n", f"Size: {stability_df.columns.size}")
 
     # EMA computation
     ema_span = 5 #το 5 μπηκε αυθαιρετα
@@ -378,7 +378,7 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
 
     # EMA dataframe
     ema_df = statistical_df[[col for col in statistical_df.columns if col.endswith('_ema')]]
-    print("EMA\n", ema_df)
+    print("EMA computed...\n", f"Size: {ema_df.columns.size}")
     
     # Frequency analysis
     fft_dfs = {}
@@ -410,24 +410,193 @@ def process_data(sensors:list[str], sensor_dict:dict[str, pd.DataFrame], sensors
 
     # Frequency
     freq_df = pd.concat([band_power_df, top_peaks_df, spectral_df], axis=1)
-    print("Frequency\n", freq_df)
+    print("Frequency features computed...\n", f"Size: {freq_df.columns.size}")
+
     # Add all the dfs into one
-    final_df = pd.concat([statistical_df, cv_df, stability_df, ema_df, freq_df], axis=1)
+    final_df = pd.concat([statistical_df, cv_df, stability_df, freq_df], axis=1)
 
-    # Add profile_df if it is not empty
+    # Add profile_df if it isn't empty
     if profile_df.empty == False:
-        print(profile_df)
-        final_df = pd.concat([final_df, profile_df], axis=1)
+        profile_without_last_column = profile_df.iloc[:, :-1]
+        final_with_profile_df = pd.concat([final_df, profile_without_last_column], axis=1)
+    print("Profile features added...\n", f"Size:{final_with_profile_df.columns.size}")
 
+    # Save the stable_flag column so it is not scaled
+    stable_flag_nums = profile_df["stable_flag"]
+    stable_flag_col = pd.DataFrame(stable_flag_nums, columns=["stable_flag", ])
 
     # Scale the data
-    scaled_data = scaler.fit_transform(final_df)
-    final_scaled_df = pd.DataFrame(scaled_data, columns=final_df.columns)
+    scaled_data = scaler.fit_transform(final_with_profile_df)
+    scaled_data_dataset = pd.DataFrame(scaled_data, columns=final_with_profile_df.columns) # Just a columns argument needed
+    final_scaled_df = pd.concat([scaled_data_dataset, stable_flag_col], axis=1)
 
     return final_scaled_df
 
+# Calculate target data
 
-if __name__ == '__main__':
+# Helper functions
+
+# Maintenance_score
+def compute_maintenance_score(row, weights):
+    # Compute an initial score using the provided weights
+    base_score = (row['cooler_condition'] * weights['cooler_condition'] +
+                  row['valve_condition'] * weights['valve_condition'] +
+                  row['internal_pump_leakage'] * weights['internal_pump_leakage'] +
+                  row['hydraulic_accumulator'] * weights['hydraulic_accumulator'])
+
+    # If stable_flag is 0 (machine is stable), reduce the score
+    if row['stable_flag'] == 0:
+        return base_score * (1 + weights['stable_flag'])  # Apply stability weight
+
+    return base_score  # Return the raw score without capping at 1
+
+# Failure Mode Classification (multi-label flags)
+def compute_failure_modes(df):
+    failure_modes = pd.DataFrame()
+    failure_modes["cooler_failure"] = (df["cooler_condition"] <= 20).astype(int)
+    failure_modes["valve_failure"] = (df["valve_condition"] <= 80).astype(int)
+    failure_modes["pump_failure"] = (df["internal_pump_leakage"] >= 1).astype(int)
+    failure_modes["hydraulic_failure"] = (df["hydraulic_accumulator"] <= 100).astype(int)
+    return failure_modes
+
+# RUL = Time To Failure and we calculating it based on the failure_flag
+def compute_ttf(failure_flags):
+    ttf = np.zeros_like(failure_flags, dtype=int)
+    next_failure = None
+    for i in reversed(range(len(failure_flags))):
+        if failure_flags[i]:
+            next_failure = i
+        ttf[i] = (next_failure - i) if next_failure is not None else len(failure_flags)
+    return ttf
+
+# Failure flag indicates when a machine is currently close to failing conditions
+def create_failure_flag(row) -> bool:
+  failure_flag = ((row["cooler_condition"] <= 3) |
+  (row["valve_condition"] <= 70) |
+  (row["internal_pump_leakage"] >= 2) |
+  (row["hydraulic_accumulator"] <= 90)) and row["stable_flag"]
+
+  return int(failure_flag)
+
+# Health State Classification (multi-class) 
+def compute_health_state(rul_series):
+    values = [0, 1, 2]  # 0: Healthy, 1: Degraded, 2: Failing
+    return pd.cut(rul_series, bins=[-1, 10, 30, float('inf')], labels=values[::-1], right=True).astype(int)
+
+# Returns a dataframe with the target data the model can predict.
+def target_data(training_df: pd.DataFrame, profile_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Generates target labels for predictive maintenance modeling based on the training_df and the profile_df calculated by process_data().
+
+    Args:
+        training_df (pd.DataFrame): DataFrame containing the sensor data and calculated statistical features.
+        profile_df (pd.DataFrame): DataFrame containing machine condition labels (cooler, valve, pump leakage, accumulator pressure, and stability flag).
+
+    Returns:
+        pd.DataFrame: Target DataFrame containing:
+            - Failure modes for each subsystem/component
+            - Health state classification
+            - Remaining Useful Life (RUL)
+            - Failure flag
+            - Maintenance score (normalized)
+
+    Raises:
+        ValueError: If the profile_df is empty.
+    """
+
+    if profile_df.empty:
+        raise ValueError("The target dataframe cannot be formed without a profile dataframe.")
+
+    # Maintenance_score
+    columns_of_interest = [
+        'cooler_condition',
+        'valve_condition',
+        'internal_pump_leakage',
+        'hydraulic_accumulator',
+        'stable_flag'
+    ]
+
+    # Calculating the correlation of all the features to the stable_flag
+    correlation_matrix = profile_df[columns_of_interest].corr()
+
+    # Calculating the weights of maintenance_score
+    weights = correlation_matrix['stable_flag']
+    weights_dict = weights.to_dict()  # Convert to dictionary for easier handling
+
+    # Applying the computation of maintenance score for the current data
+    training_df["maintenance_score"] = training_df.apply(lambda row: compute_maintenance_score(row, weights_dict), axis=1)
+
+    # Scale maintenance_score to MinMax
+    min_max_scaler = MinMaxScaler()
+    training_df["maintenance_score"] = min_max_scaler.fit_transform(training_df[["maintenance_score"]])
+    
+    # Extracting maintenance_col as other dataframe
+    maintenance_col = training_df["maintenance_score"]
+
+    # Failure Flag
+    failure_flag_col = pd.DataFrame(training_df.apply(lambda row: create_failure_flag(row), axis = 1), columns=["failure_flag", ])
+    print(failure_flag_col)
+
+    # RUL (Remaining Useful Life)
+    rul_col = pd.DataFrame(compute_ttf(failure_flag_col.values), columns=["RUL", ])
+    print(rul_col)
+
+    # Health State
+    health_state_col = pd.DataFrame(compute_health_state(rul_col["RUL"]), columns=["health_state", ])
+    print(health_state_col)
+
+    # Failure modes
+    failure_modes_df = compute_failure_modes(training_df)
+    print(failure_modes_df)
+
+    # Putting the maintenance score to the end
+    target_df = pd.concat([failure_flag_col, rul_col, health_state_col, failure_modes_df, maintenance_col], axis=1)
+    return target_df
+
+def extract_to_csv(data: pd.DataFrame, filename: str, file_extension: str = 'csv', separator: str = ',') -> None:
+    """
+    Extracts the given DataFrame into a CSV file with specified parameters.
+
+    Args:
+        data (pd.DataFrame): The DataFrame to be exported.
+        filename (str): The name of the output file (without extension).
+        file_extension (str, optional): The file extension to use (default is 'csv').
+        separator (str, optional): The delimiter to use in the CSV file (default is ',').
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the data is not a pandas DataFrame.
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise ValueError("The 'data' parameter must be a pandas DataFrame.")
+
+    full_filename = f"{filename}.{file_extension}"
+    data.to_csv(full_filename, sep=separator, index=False)
+    print(f"Data successfully extracted to {full_filename}")
+
+def import_target_data() -> pd.DataFrame:
+    """
+    Imports the target data from a CSV file named 'targets.csv'.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the imported target data.
+
+    Raises:
+        FileNotFoundError: If the 'targets.csv' file does not exist.
+    """
+    try:
+        df = pd.read_csv('targets.csv')
+        print("Data successfully imported from targets.csv")
+        return df
+    except FileNotFoundError as e:
+        raise FileNotFoundError("The file 'targets.csv' was not found.") from e
+
+# NOTE: To unload the data from a downloaded dataset run this file with the correct parameters. The following if statement will HAVE to 
+# contain the information for your dataset
+# Run Code
+if __name__ == '__main__':  
     # Dataset parameters set
     
     # Path of the dataset
@@ -477,320 +646,26 @@ if __name__ == '__main__':
     profile_columns = ["cooler_condition", "valve_condition", "internal_pump_leakage", "hydraulic_accumulator", "stable_flag"]
     
 
-    # TESTING load_data()
+    #^ TESTING load_data()
     #* DONE
     sensor_dfs_dict, profile_df = load_data(sensors=sensors, folder_path=folder_path, profile_columns=profile_columns, has_profile_file=has_profile_file)
-    print(sensor_dfs_dict, profile_df)
+    print("Data loaded from folder...")
 
-    # TESTING process_data()
-    final_df = process_data(sensors=sensors, sensor_dict=sensor_dfs_dict, sensors_duplicates=sensor_duplicates,
+    #^ TESTING process_data()
+    #* DONE
+    X_df = process_data(sensors=sensors, sensor_dict=sensor_dfs_dict, sensors_duplicates=sensor_duplicates,
                             stat_names=stat_names, sampling_rates_dict=sampling_rates_dict, sensors_for_statistics=sensors_for_statistics,
                             scaler=StandardScaler(), profile_df=profile_df)
-    print(final_df)
-
-# Plotting fft analysis
-def plot_fft_spectrum(fft_df, instance_indices=[0], max_freq=None):
-    """
-    Plot FFT spectrum for selected instance(s).
-
-    Parameters:
-    - fft_df (pd.DataFrame): DataFrame of FFT magnitudes (rows = instances, columns = frequency bins).
-    - instance_indices (list): which instance(s) to plot from the dataset.
-    - max_freq (float): maximum frequency to show (e.g., 200 Hz).
-    """
-    # Extract frequency values from column names
-    freqs = [float(col.replace('freq_', '').replace('Hz', '')) for col in fft_df.columns]
-
-    plt.figure(figsize=(12, 6))
-
-    for idx in instance_indices:
-        plt.plot(freqs, fft_df.iloc[idx], label=f'Instance {idx}')
-
-    plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Magnitude")
-    plt.title("FFT Spectrum")
-    if max_freq:
-        plt.xlim(0, max_freq)
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-# # Creating a dictionary with keys the name and as values a tuple (df, sampling_rate)
-
-# combined_data = pd.concat([combined_stats_ps, combined_stats_fs, combined_stats_ts, CE_stats, CP_stats, EPS1_stats, VS1_stats, SE_stats], axis=1)
-# combined_data
-
-# # the dataset for scaling
-# profile_without_first_and_last_columns = profile.iloc[:, :-1]
-# data_for_scalling = pd.concat([combined_data, profile_without_first_and_last_columns], axis=1)
-# data_for_scalling
-
-# from sklearn.preprocessing import MinMaxScaler
-# scaler = StandardScaler()
-
-# scaled_data = scaler.fit_transform(data_for_scalling)
-# scaled_data_dtset = pd.DataFrame(scaled_data, columns=data_for_scalling.columns) # Just a columns argument needed
-# scaled_data_dtset
-
-# profile_last_column = profile.iloc[:, -1]
-# total_data = pd.concat([scaled_data_dtset, profile_last_column], axis = 1)
-# total_data
-
-
-
-# ema_only
-
-# # Coefficient of Variance
-# cv_data = cv_df
-
-# # Stability
-# stability_data = stability_df
-
-# # Set up the inserting points
-# insert_at = total_data.shape[1] - 5
-# df_first = total_data.iloc[:, :insert_at]
-# df_last = total_data.iloc[:, insert_at:]
-
-# training_table = pd.concat([df_first, freq_data, cv_data, stability_data, ema_only, df_last], axis=1)
-
-# training_table
-
-# columns_of_interest = [
-#     'cooler_condition',
-#     'valve_condition',
-#     'internal_pump_leakage',
-#     'hydraulic_accumulator',
-#     'stable_flag'
-# ]
-
-# correlation_matrix = profile[columns_of_interest].corr()
-# correlation_matrix
-
-# import seaborn as sns
-
-# plt.figure(figsize=(8, 6))
-# sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f", square=True)
-# plt.title("Correlation Heatmap")
-# plt.show()
-
-# weights = correlation_matrix['stable_flag']
-
-# weights_dict = weights.to_dict() #convert to dictionary for easier handling
-
-# for feature, weight in weights_dict.items():
-#     print(f"{feature}: {weight}")
-
-# total = sum(abs(w) for w in weights_dict.values())
-# normalized_weights = {k: abs(v) / total for k, v in weights_dict.items()}
-# normalized_weights
-
-# def compute_maintenance_score(row, weights):
-#     # Compute an initial score using the provided weights
-#     base_score = (row['cooler_condition'] * weights['cooler_condition'] +
-#                   row['valve_condition'] * weights['valve_condition'] +
-#                   row['internal_pump_leakage'] * weights['internal_pump_leakage'] +
-#                   row['hydraulic_accumulator'] * weights['hydraulic_accumulator'])
-
-#     # If stable_flag is 0 (machine is stable), reduce the score
-#     if row['stable_flag'] == 0:
-#         return base_score * (1 + weights['stable_flag'])  # Apply stability weight
-
-#     return base_score  # Return the raw score without capping at 1
-
-# training_table["maintenance_score"] = training_table.apply(lambda row: compute_maintenance_score(row, weights_dict), axis=1)
-# # Scale maintenance_score to minMax
-# min_max_scaler = MinMaxScaler()
-# training_table["maintenance_score"] = min_max_scaler.fit_transform(training_table[["maintenance_score"]])
-# training_table
-
-# def create_failure_flag(row):
-
-#   failure_flag = ((row["cooler_condition"] <= 3) |
-#   (row["valve_condition"] <= 70) |
-#   (row["internal_pump_leakage"] >= 2) |
-#   (row["hydraulic_accumulator"] <= 90)) and row["stable_flag"]
-
-#   return int(failure_flag)
-
-# training_table["failure_flag"] = training_table.apply(lambda row: create_failure_flag(row), axis = 1)
-# training_table
-
-# # RUL = Time To Failure and we calculating it based on the failure_flag
-# def compute_ttf(failure_flags):
-#     ttf = np.zeros_like(failure_flags, dtype=int)
-#     next_failure = None
-#     for i in reversed(range(len(failure_flags))):
-#         if failure_flags[i]:
-#             next_failure = i
-#         ttf[i] = (next_failure - i) if next_failure is not None else len(failure_flags)
-#     return ttf
-
-# training_table["rul"] = compute_ttf(training_table["failure_flag"].values)
-# training_table
-
-# # Health State Classification (multi-class)
-# def compute_health_state(rul_series):
-#     values = [0, 1, 2]  # 0: Healthy, 1: Degraded, 2: Failing
-#     return pd.cut(rul_series, bins=[-1, 10, 30, float('inf')], labels=[2,1,0], right=True).astype(int)
-
-# training_table["health_state"] = compute_health_state(training_table["rul"])
-# training_table.health_state.value_counts()
-
-# # Failure Mode Classification (multi-label flags)
-# def compute_failure_modes(df):
-#     failure_modes = pd.DataFrame()
-#     failure_modes["cooler_failure"] = (df["cooler_condition"] <= 20).astype(int)
-#     failure_modes["valve_failure"] = (df["valve_condition"] <= 80).astype(int)
-#     failure_modes["pump_failure"] = (df["internal_pump_leakage"] >= 1).astype(int)
-#     failure_modes["hydraulic_failure"] = (df["hydraulic_accumulator"] <= 100).astype(int)
-#     return failure_modes
-
-# failure_modes_df = compute_failure_modes(training_table)
-# training_table = pd.concat([training_table, failure_modes_df], axis=1)
-# training_table
-
-# training_table
-
-# list(training_table.columns)
-
-# #i am placing maintenance_score last for easier handling later on the train test split
-# maintenance_col = training_table['maintenance_score']
-
-# training_table = training_table.drop(columns=['maintenance_score'])
-
-# training_table['maintenance_score'] = maintenance_col
-
-# X = training_table.drop(columns=['maintenance_score'])
-# y = training_table['maintenance_score']
-
-# from sklearn.model_selection import train_test_split
-
-# X_train1, X_test1, y_train1, y_test1 = train_test_split(
-#     X, y, test_size=0.2, random_state=42
-# )
-
-# from sklearn.ensemble import RandomForestRegressor
-
-# model = RandomForestRegressor(random_state=42)
-# model.fit(X_train1, y_train1)
-
-
-# importances = model.feature_importances_
-# feature_names = X.columns
-# feat_imp_df = pd.DataFrame({
-#     'Feature': feature_names,
-#     'Importance': importances
-# }).sort_values(by='Importance', ascending=False)
-
-# # Visualizing
-# plt.figure(figsize=(10, 6))
-# plt.barh(feat_imp_df['Feature'][:20][::-1], feat_imp_df['Importance'][:20][::-1])
-# plt.xlabel('Importance')
-# plt.title('Top 20 Features for Maintenance Score')
-# plt.tight_layout()
-# plt.show()
-
-# from sklearn.model_selection import train_test_split
-
-# top_features = feat_imp_df['Feature'].head(20) # Top features from feature importance
-
-# X_top = training_table[top_features]
-
-# y = training_table['maintenance_score']
-
-# X_train, X_test, y_train, y_test = train_test_split(X_top, y, test_size=0.2, random_state=42)
-
-# def get_score(model, X_train, X_test ,y_train, y_test):
-#   model.fit(X_train, y_train)
-#   return model.score(X_test, y_test)
-
-# # importing the  models
-# from sklearn.ensemble import RandomForestRegressor
-# from sklearn.svm import SVR
-# from sklearn.neighbors import KNeighborsRegressor
-
-# rf_model = RandomForestRegressor(n_estimators=100)
-# svm_model = SVR()
-# knn_model = KNeighborsRegressor()
-
-# print("rf score:" + str(get_score(rf_model, X_train, X_test, y_train, y_test)))
-# print("svm score:" + str(get_score(svm_model, X_train, X_test, y_train, y_test)))
-# print("kneighbohrs score:" + str(get_score(knn_model, X_train, X_test, y_train, y_test)))
-
-# from sklearn.model_selection import KFold, cross_val_score
-
-# kfold = KFold(n_splits=10, shuffle=True, random_state=42)
-
-# rf_scores = cross_val_score(rf_model, X_train, y_train, cv=kfold, scoring='r2')
-# svm_scores = cross_val_score(svm_model, X_train, y_train, cv=kfold, scoring='r2')
-# knn_scores = cross_val_score(knn_model, X_train, y_train, cv=kfold, scoring='r2')
-
-# rf_scores
-
-# svm_scores
-
-# knn_scores
-
-# def get_av(score_list):
-#   av_score = np.median(score_list)
-#   return av_score
-
-# get_av(rf_scores) # average of rf
-
-# get_av(svm_scores) # average of svm
-
-# get_av(knn_scores) # average of knn
-
-# import tensorflow as tf
-# from tensorflow.keras.models import Sequential
-# from tensorflow.keras.layers import Dense
-# from sklearn.metrics import mean_squared_error, r2_score
-
-# from sklearn.preprocessing import StandardScaler
-
-# scaler = StandardScaler()
-
-# X_train_scaled = scaler.fit_transform(X_train)
-# X_test_scaled = scaler.transform(X_test) # no fit here because there will be data leakage
-
-# dl_model = Sequential()
-# dl_model.add(Dense(128, activation='relu', input_shape=(X_train.shape[1],)))
-# dl_model.add(Dense(64, activation='relu'))
-# dl_model.add(Dense(32, activation='relu'))
-# dl_model.add(Dense(1))
-
-
-# dl_model.compile(optimizer='adam', loss='mse', metrics=['mae']) #compiling
-
-# dl_model_fitted = dl_model.fit(X_train_scaled, y_train, validation_split=0.2, epochs=100, batch_size=16, verbose=1)
-
-# import matplotlib.pyplot as plt
-
-# plt.plot(dl_model_fitted.history['loss'], label='Training Loss')
-# plt.plot(dl_model_fitted.history['val_loss'], label='Validation Loss')
-# plt.legend()
-# plt.title("Loss vs Epochs")
-# plt.xlabel("Epoch")
-# plt.ylabel("Loss")
-# plt.show()
-
-# dl_model.evaluate(X_test_scaled, y_test)
-
-# import matplotlib.pyplot as plt
-
-# y_pred = dl_model.predict(X_test_scaled) # predictions
-
-# # Graph
-# plt.figure(figsize=(8, 6))
-# plt.scatter(y_test, y_pred, alpha=0.5, color='royalblue')
-# plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-# plt.xlabel("Real Maintenance Score")
-# plt.ylabel("Predicted Maintenance Score")
-# plt.title("Predictions vs Real Values")
-# plt.grid(True)
-# plt.tight_layout()
-# plt.show()
+    print(X_df)
+
+    #^ TESTING target_data()
+    targets_df = target_data(X_df, profile_df)
+    print("X: ", X_df)
+    print("Targets", targets_df)
+
+    #^ Extract to csv
+    extract_to_csv(data=X_df, filename="x", file_extension="csv", separator=",")
+    extract_to_csv(data=targets_df, filename="targets", file_extension="csv", separator=",")
 
 
 
