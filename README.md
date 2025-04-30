@@ -57,6 +57,21 @@ venv\Scripts\activate
 ```
 
 ### 3. Install Dependencies
+```bash 
+pip install -r requirements.txt
+```
 
+### 4. Modify your config file accordingly
+Add the configuration you wish for your data in the config.json.
 
+### 5. Paste your csv like data in the data folder
+Paste the data you want to make a prediction for in the data folder. Now you are all set to use the model.
+
+### 6. Run the data_processing.py
+Run data_processing.py and the extracted tables
+
+## 🧪 Example usage from terminal:
+```bash
+python model_prediction.py --model models/failure_flag_model.pkl --data data_tables/new_sensor_input.csv
+```
 
