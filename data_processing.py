@@ -6,9 +6,30 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import classification_report
-import os
+import os, json
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import find_peaks
+
+# For loading new data
+def load_config(json_path="config.json"):
+    with open(json_path, 'r') as f:
+        config = json.load(f)
+
+    # Assign variables from the JSON
+    folder_path = config["folder_path"]
+    sensors = config["sensors"]
+    sampling_rates_dict = config["sampling_rates_dict"]
+    stat_names = config["stat_names"]
+    sensor_duplicates = config["sensor_duplicates"]
+    sensors_for_statistics = config["sensors_for_statistics"]
+    has_profile_file = config["has_profile_file"]
+    profile_columns = config["profile_columns"]
+
+    return (
+        folder_path, sensors, sampling_rates_dict, stat_names,
+        sensor_duplicates, sensors_for_statistics,
+        has_profile_file, profile_columns
+    )
 
 # Load data
 #* DONE
@@ -550,6 +571,8 @@ def target_data(training_df: pd.DataFrame, profile_df: pd.DataFrame) -> pd.DataF
     
     # Extracting maintenance_col as other dataframe
     maintenance_col = training_df["maintenance_score"]
+    training_df.drop(columns=["maintenance_score", ])
+    print(training_df)
 
     # Failure Flag
     failure_flag_col = pd.DataFrame(training_df.apply(lambda row: create_failure_flag(row), axis = 1), columns=["failure_flag", ])
@@ -605,63 +628,30 @@ def import_target_data() -> pd.DataFrame:
         FileNotFoundError: If the 'targets.csv' file does not exist.
     """
     try:
-        df = pd.read_csv('targets.csv')
+        df = pd.read_csv('data_tables/targets.csv')
         print("Data successfully imported from targets.csv")
         return df
     except FileNotFoundError as e:
         raise FileNotFoundError("The file 'targets.csv' was not found.") from e
+
+def import_reference_data() -> pd.DataFrame:
+    try:
+        df = pd.read_csv('data_tables/x.csv')
+        print(df)
+        print("Data successfully imported from x.csv")
+        return df
+    except FileNotFoundError as e:
+        raise FileNotFoundError("The file 'x.csv' was not found.") from e
 
 # NOTE: To unload the data from a downloaded dataset run this file with the correct parameters. The following if statement will HAVE to 
 # contain the information for your dataset
 # Run Code
 if __name__ == '__main__':  
     # Dataset parameters set
-    
-    # Path of the dataset
-    folder_path = "data/condition+monitoring+of+hydraulic+systems"
 
-    # Sensor names
-    sensors = [
-    "PS1", "PS2", "PS3", "PS4", "PS5", "PS6",  # Pressure sensors
-    "EPS1",  # Motor power
-    "FS1", "FS2",  # Volume flow
-    "TS1", "TS2", "TS3", "TS4",  # Temperature sensors
-    "VS1",  # Vibration
-    "CE",  # Cooling efficiency
-    "CP",  # Cooling power
-    "SE"  # Efficiency factor
-    ]
-
-    # Dictionary with sampling rates of the sensors
-    sampling_rates_dict = {
-    'PS1': 100, 'PS2': 100, 'PS3': 100, 'PS4': 100, 'PS5': 100, 'PS6': 100,
-    'EPS1': 100, 'FS1': 10, 'FS2': 10,
-    'TS1': 1, 'TS2': 1, 'TS3': 1, 'TS4': 1,
-    'VS1': 1,
-    'CE': 1, 'CP': 1, 'SE': 1
-    }
-
-    # Statistic names
-    stat_names = ["mean", "std", "min", "max", "range", "rms"]
-
-    # List of sensors that appear more than once in the setup
-    sensor_duplicates = {"PS":6, "TS":4, "FS":2}
-
-    # Sensors list used for statistical analysis
-    sensors_for_statistics = [
-    "PS",  # Pressure sensors
-    "EPS1",  # Motor power
-    "FS",  # Volume flow
-    "TS",  # Temperature sensors
-    "VS1",  # Vibration
-    "CE",  # Cooling efficiency
-    "CP",  # Cooling power
-    "SE"  # Efficiency factor
-    ]
-
-    # Profile
-    has_profile_file = True
-    profile_columns = ["cooler_condition", "valve_condition", "internal_pump_leakage", "hydraulic_accumulator", "stable_flag"]
+    (folder_path, sensors, sampling_rates_dict, stat_names,
+     sensor_duplicates, sensors_for_statistics,
+     has_profile_file, profile_columns) = load_config()
     
 
     #^ TESTING load_data()
@@ -674,16 +664,13 @@ if __name__ == '__main__':
     X_df = process_data(sensors=sensors, sensor_dict=sensor_dfs_dict, sensors_duplicates=sensor_duplicates,
                             stat_names=stat_names, sampling_rates_dict=sampling_rates_dict, sensors_for_statistics=sensors_for_statistics,
                             scaler=StandardScaler(), profile_df=profile_df)
-    print(X_df)
+    extract_to_csv(data=X_df, filename="x", file_extension="csv", separator=",")
+    print("X: ", X_df)
 
     #^ TESTING target_data()
     targets_df = target_data(X_df, profile_df)
-    print("X: ", X_df)
-    print("Targets", targets_df)
-
-    #^ Extract to csv
-    extract_to_csv(data=X_df, filename="x", file_extension="csv", separator=",")
     extract_to_csv(data=targets_df, filename="targets", file_extension="csv", separator=",")
+    print("Targets", targets_df)
 
 
 

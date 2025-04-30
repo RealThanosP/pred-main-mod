@@ -1,0 +1,34 @@
+{
+    "folder_path": "data/condition+monitoring+of+hydraulic+systems",
+    "sensors": [
+      "PS1", "PS2", "PS3", "PS4", "PS5", "PS6",
+      "EPS1",
+      "FS1", "FS2",
+      "TS1", "TS2", "TS3", "TS4",
+      "VS1",
+      "CE", "CP", "SE"
+    ],
+    "sampling_rates_dict": {
+      "PS1": 100, "PS2": 100, "PS3": 100, "PS4": 100, "PS5": 100, "PS6": 100,
+      "EPS1": 100, "FS1": 10, "FS2": 10,
+      "TS1": 1, "TS2": 1, "TS3": 1, "TS4": 1,
+      "VS1": 1,
+      "CE": 1, "CP": 1, "SE": 1
+    },
+    "stat_names": ["mean", "std", "min", "max", "range", "rms"],
+    "sensor_duplicates": {
+      "PS": 6,
+      "TS": 4,
+      "FS": 2
+    },
+    "sensors_for_statistics": [
+      "PS", "EPS1", "FS", "TS", "VS1", "CE", "CP", "SE"
+    ],
+    "has_profile_file": true,
+    "profile_columns": [
+      "cooler_condition", "valve_condition",
+      "internal_pump_leakage", "hydraulic_accumulator",
+      "stable_flag"
+    ]
+  }
+  
