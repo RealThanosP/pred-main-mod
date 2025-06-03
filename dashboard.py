@@ -31,14 +31,14 @@ print(target_df)
 
 # Sidebar
 st.sidebar.title("Settings")
-machine_id = st.sidebar.selectbox("Select ", options=target_df.index.unique())
+machine_id = st.sidebar.selectbox("Select Timestamp", options=target_df.index.unique())
 view_option = st.sidebar.radio("View Options", ('Overview', 'Detailed Trends'))
 
 # Filtered Data
 machine_data = target_df.iloc[machine_id]
 
 # Overview Metrics
-st.header(f"Machine ID: {machine_id}")
+st.header(f"Timestamp: {machine_id}")
 
 col1, col2, col3 = st.columns(3)
 
@@ -55,7 +55,7 @@ with col3:
 st.divider()
 
 # Failure Modes
-st.subheader("Failure Mode Probabilities")
+st.subheader("Failure Mode Flags")
 st.write(machine_data[['cooler_failure', 'valve_failure', 'pump_failure', 'hydraulic_failure']])
 
 # Plotting Trends
@@ -93,7 +93,7 @@ if view_option == 'Detailed Trends':
 st.subheader("Alerts")
 if machine_data['failure_flag'] == 1:
     st.error("⚠️ Machine predicted to fail soon! Immediate action required.")
-elif machine_data['maintenance_score'] > 0.7:
+elif machine_data['maintenance_score'] > 0.75:
     st.warning("⚠️ High maintenance score detected. Plan intervention.")
 else:
     st.success("✅ Machine is operating normally.")
