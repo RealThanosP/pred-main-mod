@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 import matplotlib.pyplot as plt
 
 # Title
@@ -16,7 +15,7 @@ print(target_df)
 
 # Sidebar
 st.sidebar.title("Settings")
-machine_id = st.sidebar.selectbox("Select Machine ID", options=target_df.index.unique())
+machine_id = st.sidebar.selectbox("Select ", options=target_df.index.unique())
 view_option = st.sidebar.radio("View Options", ('Overview', 'Detailed Trends'))
 
 # Filtered Data
