@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 import matplotlib.pyplot as plt
 
 # Title
@@ -8,7 +9,22 @@ st.title("Predictive Maintenance Dashboard 🚀")
 # Assume you have a dataframe 'target_df' from your target_data() function
 # Example:
 # target_df = your_function()
-from data_processing import import_target_data
+def import_target_data() -> pd.DataFrame:
+    """
+    Imports the target data from a CSV file named 'targets.csv'.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the imported target data.
+
+    Raises:
+        FileNotFoundError: If the 'targets.csv' file does not exist.
+    """
+    try:
+        df = pd.read_csv('data_tables/targets.csv')
+        print("Data successfully imported from targets.csv")
+        return df
+    except FileNotFoundError as e:
+        raise FileNotFoundError("The file 'targets.csv' was not found.") from e
 
 target_df = import_target_data()
 print(target_df)

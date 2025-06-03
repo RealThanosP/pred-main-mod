@@ -617,23 +617,6 @@ def extract_to_csv(data: pd.DataFrame, filename: str, file_extension: str = 'csv
     data.to_csv(full_filename, sep=separator, index=False)
     print(f"Data successfully extracted to {full_filename}")
 
-def import_target_data() -> pd.DataFrame:
-    """
-    Imports the target data from a CSV file named 'targets.csv'.
-
-    Returns:
-        pd.DataFrame: DataFrame containing the imported target data.
-
-    Raises:
-        FileNotFoundError: If the 'targets.csv' file does not exist.
-    """
-    try:
-        df = pd.read_csv('data_tables/targets.csv')
-        print("Data successfully imported from targets.csv")
-        return df
-    except FileNotFoundError as e:
-        raise FileNotFoundError("The file 'targets.csv' was not found.") from e
-
 def import_reference_data() -> pd.DataFrame:
     try:
         df = pd.read_csv('data_tables/x.csv')
